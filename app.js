@@ -548,7 +548,7 @@ async function handleAiProposeKey(testId) {
   if (!AIVision.isConfigured()) {
     openSheet(`
       <div class="section-title" style="margin-top:0;">AI Vision isn\u2019t set up yet</div>
-      <div class="muted small mb-16">Add your Claude API key in Settings to let AI read question papers and propose an answer key.</div>
+      <div class="muted small mb-16">Add your Gemini API key in Settings to let AI read question papers and propose an answer key.</div>
       <button class="btn btn-primary btn-block" data-action="goto" data-href="#/settings">Open Settings</button>
     `);
     return;
@@ -1104,7 +1104,7 @@ async function runExplainAnswer(resultId, qIndex, btnEl) {
   const test = TestManager.getById(result.testId);
   const container = document.getElementById(`explain-${qIndex}`);
   if (!AIVision.isConfigured()) {
-    container.innerHTML = `<div class="explain-box">Add your Claude API key in Settings to enable explanations.</div>`;
+    container.innerHTML = `<div class="explain-box">Add your Gemini API key in Settings to enable explanations.</div>`;
     return;
   }
   btnEl.textContent = '…';
@@ -1209,17 +1209,18 @@ function renderSettings() {
           <div class="switch ${aiCfg.enabled ? 'on' : ''}" id="sw-ai-enabled"></div>
         </div>
         <div class="field mt-12">
-          <label>Claude API key</label>
-          <input type="password" id="ai-key-input" placeholder="sk-ant-..." value="${escapeHtml(aiCfg.apiKey || '')}" autocomplete="off">
+          <label>Gemini API key</label>
+          <input type="password" id="ai-key-input" placeholder="AIza..." value="${escapeHtml(aiCfg.apiKey || '')}" autocomplete="off">
         </div>
         <div class="field">
           <label>Model</label>
           <select id="ai-model-select">
-            <option value="claude-sonnet-5" ${aiCfg.model === 'claude-sonnet-5' ? 'selected' : ''}>Claude Sonnet 5 (recommended)</option>
-            <option value="claude-haiku-4-5-20251001" ${aiCfg.model === 'claude-haiku-4-5-20251001' ? 'selected' : ''}>Claude Haiku 4.5 (faster, cheaper)</option>
+            <option value="gemini-3.8-flash" ${aiCfg.model === 'gemini-3.8-flash' ? 'selected' : ''}>Gemini 3.8 Flash (recommended)</option>
+            <option value="gemini-3.5-flash-lite" ${aiCfg.model === 'gemini-3.5-flash-lite' ? 'selected' : ''}>Gemini 3.5 Flash-Lite (fastest, cheapest)</option>
+            <option value="gemini-2.5-flash" ${aiCfg.model === 'gemini-2.5-flash' ? 'selected' : ''}>Gemini 2.5 Flash</option>
           </select>
         </div>
-        <div class="muted small mb-12">Your key is stored only in this browser\u2019s local storage and is sent directly to Anthropic\u2019s API \u2014 never bundled in the app, never sent anywhere else. Since this is a static site with no backend, anyone with access to this device/browser could read the key from local storage; use a key with a low spending limit.</div>
+        <div class="muted small mb-12">Your key is stored only in this browser\u2019s local storage and is sent directly to Google\u2019s Gemini API \u2014 never bundled in the app, never sent anywhere else. Get a free key at aistudio.google.com/apikey. Since this is a static site with no backend, anyone with access to this device/browser could read the key from local storage; use a key with a low spending limit.</div>
         <div class="flex gap-12">
           <button class="btn btn-glass flex-1" id="save-ai-config">Save</button>
           <button class="btn btn-primary flex-1" id="test-ai-connection">Test connection</button>

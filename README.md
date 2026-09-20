@@ -75,21 +75,20 @@ with a camera.
   wipe all local data, from Settings. Nothing is ever uploaded anywhere;
   all image processing happens in the browser on-device.
 
-## AI Vision (v2) — real, optional, bring-your-own-key
+## AI Vision — real, optional, bring-your-own-key (Google Gemini)
 
-Settings → **AI Vision** lets you paste your own Claude API key. It's stored
-only in this browser's `localStorage` and calls `api.anthropic.com` directly
-from the browser using Anthropic's documented
-`anthropic-dangerous-direct-browser-access` header — this is Anthropic's
-supported "bring your own key" pattern for exactly this situation (a static
-site with no backend to proxy through). The key is never in source code,
-never sent anywhere but Anthropic. Because it's client-side, anyone with
-access to this browser/device could read the key from local storage —
-use a key with a low spending limit.
+Settings → **AI Vision** lets you paste your own Google Gemini API key (a
+free key from <https://aistudio.google.com/apikey> works). It's stored only in
+this browser's `localStorage` and calls
+`generativelanguage.googleapis.com` directly from the browser — a static
+site with no backend to proxy through. The key is never in source code and
+never sent anywhere but Google. Because it's client-side, anyone with access
+to this browser/device could read the key from local storage — use a key with
+a low spending limit.
 
 With it configured:
 - **Answer Key screen** — "Let AI read the question paper" sends a photo of
-  the question paper to Claude's vision model and gets back a proposed
+  the question paper to Gemini's vision model and gets back a proposed
   answer key with a per-question confidence score and short reasoning
   (tap the "AI" badge on any row to see why). Every answer is still a
   manual-grid entry underneath — tapping any option overrides the AI
@@ -141,7 +140,7 @@ gradingEngine.js        Pure scoring logic
 studentManager.js       Identity normalization helpers
 resultManager.js        Result persistence + class insights
 answerKeyService.js     Manual key helpers + QuestionParser (adapts aiVision output)
-aiVision.js             Real Claude API calls: question-paper reading, explanations
+aiVision.js             Real Gemini API calls: question-paper reading, explanations
 omrGenerator.js         Builds + renders the exact OMR sheet template
 imageProcessor.js       Grayscale, homography math, warping, patch sampling
 omrScanner.js           Fiducial detection, rectification, bubble reading

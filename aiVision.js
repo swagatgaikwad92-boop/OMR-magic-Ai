@@ -3,13 +3,13 @@
    optional "Explain" feature from the product spec).
 
    Honesty note: OMR Magic does not ship an API key. The teacher
-   supplies their own Claude API key in Settings, stored only in
-   this browser's localStorage — never in source code, never sent
-   anywhere but api.anthropic.com. Calls go directly from the
-   browser using Anthropic's documented direct-browser-access
-   header, which exists precisely for "bring your own key" apps
-   like this one (there is no backend to proxy through in a
-   static GitHub Pages deployment). If no key is configured, or
+   supplies their own Google Gemini API key (a free key from
+   Google AI Studio works) in Settings, stored only in this
+   browser's localStorage — never in source code, never sent
+   anywhere but generativelanguage.googleapis.com. Calls go
+   directly from the browser (the Gemini API allows CORS), since
+   there is no backend to proxy through in a static GitHub Pages
+   deployment. If no key is configured, or
    the device is offline, every function below reports itself
    unavailable rather than fabricating a result — the app keeps
    working in Manual Mode either way.
@@ -25,15 +25,20 @@
 
 const AIVision = (() => {
   const CONFIG_KEY = 'omrmagic:v1:ai-config';
-  const API_URL = 'https://api.anthropic.com/v1/messages';
-  const DEFAULT_MODEL = 'claude-sonnet-5';
+  const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
+  const DEFAULT_MODEL = 'gemini-3.8-flash';
 
   function getConfig() {
+    const blank = { apiKey: '', model: DEFAULT_MODEL, enabled: false };
     try {
       const raw = localStorage.getItem(CONFIG_KEY);
-      return raw ? JSON.parse(raw) : { apiKey: '', model: DEFAULT_MODEL, enabled: false };
+      if (!raw) return blank;
+      const cfg = JSON.parse(raw);
+      // A config saved by an older version (different AI provider) is useless now: drop it.
+      if (!cfg.model || !/^gemini/i.test(cfg.model)) return blank;
+      return cfg;
     } catch (e) {
-      return { apiKey: '', model: DEFAULT_MODEL, enabled: false };
+      return blank;
     }
   }
 
@@ -50,25 +55,39 @@ const AIVision = (() => {
     return typeof navigator !== 'undefined' ? navigator.onLine : true;
   }
 
-  async function callClaude(messages, maxTokens = 2000) {
+  // Calls Gemini's generateContent. `parts` is an array of Gemini parts
+  // ({text} or {inlineData}). Returns the model's text.
+  async function callGemini(parts, { maxTokens = 2000, json = false } = {}) {
     const cfg = getConfig();
-    const res = await fetch(API_URL, {
+    const model = encodeURIComponent(cfg.model || DEFAULT_MODEL);
+    const generationConfig = { maxOutputTokens: maxTokens };
+    if (json) generationConfig.responseMimeType = 'application/json';
+    const res = await fetch(`${API_BASE}${model}:generateContent`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': cfg.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-goog-api-key': cfg.apiKey.trim(),
       },
-      body: JSON.stringify({ model: cfg.model || DEFAULT_MODEL, max_tokens: maxTokens, messages }),
+      body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`API error ${res.status}: ${text.slice(0, 200)}`);
+      let msg = text.slice(0, 200);
+      try { msg = JSON.parse(text).error.message || msg; } catch (e) { /* keep raw */ }
+      throw new Error(`API error ${res.status}: ${msg}`);
     }
     const data = await res.json();
-    const textBlock = (data.content || []).find(b => b.type === 'text');
-    return textBlock ? textBlock.text : '';
+    if (data.promptFeedback && data.promptFeedback.blockReason) {
+      throw new Error('Request blocked by Gemini (' + data.promptFeedback.blockReason + ')');
+    }
+    const cand = (data.candidates || [])[0];
+    const out = cand && cand.content && cand.content.parts
+      ? cand.content.parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('')
+      : '';
+    if (!out && cand && cand.finishReason && cand.finishReason !== 'STOP') {
+      throw new Error('Gemini returned no text (' + cand.finishReason + ')');
+    }
+    return out;
   }
 
   function extractJson(text) {
@@ -79,16 +98,16 @@ const AIVision = (() => {
     return JSON.parse(cleaned.slice(start, end + 1));
   }
 
-  function dataUrlToImageBlock(dataUrl) {
+  function dataUrlToImagePart(dataUrl) {
     const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/.exec(dataUrl);
     if (!match) throw new Error('Unsupported image format');
-    return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+    return { inlineData: { mimeType: match[1], data: match[2] } };
   }
 
   // ---------------- Stage A/B: question paper -> proposed answer key ----------------
   async function analyzeQuestionPaper(imageDataUrl, expectedNumQuestions) {
     if (!isOnline()) return { ok: false, reason: 'offline', message: 'AI unavailable offline' };
-    if (!isConfigured()) return { ok: false, reason: 'not_configured', message: 'Add your Claude API key in Settings to enable AI Vision.' };
+    if (!isConfigured()) return { ok: false, reason: 'not_configured', message: 'Add your Gemini API key in Settings to enable AI Vision.' };
 
     const prompt = `You are analyzing a photograph of an exam question paper for a teacher's OMR grading app.
 
@@ -123,8 +142,8 @@ Rules:
 ${expectedNumQuestions ? `- The teacher's test is currently set up for ${expectedNumQuestions} questions. If you count a different number, still report what you actually see.` : ''}`;
 
     try {
-      const content = [dataUrlToImageBlock(imageDataUrl), { type: 'text', text: prompt }];
-      const text = await callClaude([{ role: 'user', content }], 6000);
+      const parts = [dataUrlToImagePart(imageDataUrl), { text: prompt }];
+      const text = await callGemini(parts, { maxTokens: 16000, json: true });
       const parsed = extractJson(text);
       if (parsed.error) return { ok: false, reason: 'unreadable', message: parsed.error };
       if (!Array.isArray(parsed.questions) || !parsed.questions.length) {
@@ -140,7 +159,7 @@ ${expectedNumQuestions ? `- The teacher's test is currently set up for ${expecte
   // ---------------- optional "Explain" for a wrong answer ----------------
   async function explainAnswer({ questionNumber, questionText, options, studentAnswerLabel, correctAnswerLabel }) {
     if (!isOnline()) return { ok: false, message: 'AI unavailable offline' };
-    if (!isConfigured()) return { ok: false, message: 'Add your Claude API key in Settings to enable explanations.' };
+    if (!isConfigured()) return { ok: false, message: 'Add your Gemini API key in Settings to enable explanations.' };
 
     const prompt = `A student answered a multiple-choice exam question incorrectly.
 Question ${questionNumber}${questionText ? ': ' + questionText : ' (question text not available)'}
@@ -151,7 +170,7 @@ Correct answer: ${correctAnswerLabel}
 In 2-3 short sentences, explain why the correct answer is right and briefly note the likely misconception behind the student's answer. Be concise and plain-spoken. Return plain text only, no markdown, no JSON.`;
 
     try {
-      const text = await callClaude([{ role: 'user', content: prompt }], 400);
+      const text = await callGemini([{ text: prompt }], { maxTokens: 2000 });
       return { ok: true, explanation: text.trim() };
     } catch (e) {
       console.error('AIVision.explainAnswer failed', e);
@@ -164,8 +183,8 @@ In 2-3 short sentences, explain why the correct answer is right and briefly note
     const cfg = getConfig();
     if (!cfg.apiKey || cfg.apiKey.trim().length < 10) return { ok: false, message: 'Enter an API key first.' };
     try {
-      const text = await callClaude([{ role: 'user', content: 'Reply with exactly: OK' }], 10);
-      return { ok: true, message: text.trim() ? 'Connected — AI Vision is ready.' : 'Connected.' };
+      const text = await callGemini([{ text: 'Reply with exactly: OK' }], { maxTokens: 256 });
+      return { ok: true, message: text.trim() ? 'Connected to Gemini — AI Vision is ready.' : 'Connected.' };
     } catch (e) {
       return { ok: false, message: 'Connection failed: ' + (e.message || 'unknown error') };
     }

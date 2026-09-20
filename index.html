@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OMR Magic</title>
+  <meta name="description" content="Take a photo. Let OMR Magic do the boring work. Smart OMR answer sheet checking for teachers.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#EAF2FB">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="OMR Magic">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <div id="app" role="main" aria-live="polite"></div>
+  <noscript>OMR Magic needs JavaScript to run.</noscript>
+
+  <!-- Data layer -->
+  <script src="./js/storage.js"></script>
+  <script src="./js/testManager.js"></script>
+  <script src="./js/gradingEngine.js"></script>
+  <script src="./js/studentManager.js"></script>
+  <script src="./js/resultManager.js"></script>
+  <script src="./js/answerKeyService.js"></script>
+  <!-- OMR / vision engine -->
+  <script src="./js/omrGenerator.js"></script>
+  <script src="./js/imageProcessor.js"></script>
+  <script src="./js/omrScanner.js"></script>
+  <script src="./js/camera.js"></script>
+  <!-- Supporting services -->
+  <script src="./js/exportService.js"></script>
+  <script src="./js/batchScanner.js"></script>
+  <!-- App shell / UI -->
+  <script src="./js/app.js"></script>
+</body>
+</html>

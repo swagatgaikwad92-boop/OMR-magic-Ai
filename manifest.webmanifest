@@ -1,0 +1,16 @@
+{
+  "name": "OMR Magic",
+  "short_name": "OMR Magic",
+  "description": "Take a photo. Let OMR Magic do the boring work. Smart OMR answer sheet checking for teachers.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#EAF2FB",
+  "theme_color": "#EAF2FB",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -7,11 +7,26 @@ answer sheets using real, on-device computer vision — no build step, no
 backend, no npm. Pure HTML/CSS/vanilla JS, deployable straight to GitHub
 Pages.
 
-## Deploy in one step
+## Deploy on GitHub Pages
 
-1. Push this repository to GitHub.
-2. In **Settings → Pages**, set the source to the `main` branch, root folder.
-3. Open the published URL. That's it — no build, no Node, no server.
+**Repo name:** anything works. Use `omr-magic` → your app lives at
+`https://<your-username>.github.io/omr-magic/`. (Only a repo named exactly
+`<your-username>.github.io` is served at the bare root URL.)
+
+1. Create a **public** repo named `omr-magic`.
+2. **Add file → Upload files**, and upload **every file from this folder**
+   (index.html, styles.css, all the `.js` files, the three `.png` icons,
+   manifest.webmanifest, service-worker.js). They must all sit in the repo
+   root, next to `index.html`. This project is deliberately *flat* (no
+   sub-folders) because GitHub's web uploader can't upload folders from a
+   phone.
+3. **Settings → Pages** → Source: *Deploy from a branch* → `main` / `(root)`
+   → Save. Wait ~1 minute.
+4. Open `https://<your-username>.github.io/omr-magic/` (with the trailing
+   path!). Chrome menu → **Install app**.
+
+If the app can't start (a file is missing), it now shows a diagnostic
+screen listing exactly which files failed to load, instead of a blank page.
 
 Camera scanning requires HTTPS (which GitHub Pages provides) and a device
 with a camera.
@@ -100,39 +115,40 @@ AI service or a heavier dependency than a single-file, no-build PWA can
 honestly claim to ship "complete." Rather than fake them, they're wired as
 clean, swappable seams:
 
-- **AI question-paper reading** (`js/answerKeyService.js` →
+- **AI question-paper reading** (`answerKeyService.js` →
   `QuestionParser.callAIProvider`): the OCR → segmentation → reasoning →
   proposed-key pipeline described in the product spec is real, but the
   actual model call is a single function left for you to connect to
   whatever AI provider you choose. Until then (or when offline), the app
   says so plainly — "AI unavailable offline" / "not set up yet" — and falls
   back to the always-available manual answer-key grid.
-- **Excel / PDF export** (`js/exportService.js`): CSV is fully implemented
+- **Excel / PDF export** (`exportService.js`): CSV is fully implemented
   with zero dependencies. `exportExcel` and `exportPDF` are defined with the
   same interface shape so a real library (SheetJS, pdf-lib, etc.) can be
   dropped in later without touching any calling code.
 
-## Project structure
+## Project structure (flat — every file in the repo root)
 
 ```
-index.html              App shell
+index.html              App shell + boot guard + service-worker registration
 manifest.webmanifest    PWA manifest
 service-worker.js       Offline app-shell caching
-css/styles.css          Liquid-glass design system
-js/storage.js           localStorage persistence layer
-js/testManager.js       Test template CRUD
-js/gradingEngine.js     Pure scoring logic
-js/studentManager.js    Identity normalization helpers
-js/resultManager.js     Result persistence + class insights
-js/answerKeyService.js  Manual key helpers + QuestionParser (adapts aiVision output)
-js/aiVision.js          Real Claude API calls: question-paper reading, explanations
-js/omrGenerator.js      Builds + renders the exact OMR sheet template
-js/imageProcessor.js    Grayscale, homography math, warping, patch sampling
-js/omrScanner.js        Fiducial detection, rectification, bubble reading
-js/camera.js            getUserMedia lifecycle + live-guidance loop
-js/exportService.js     CSV (real) / Excel / PDF (interfaces)
-js/batchScanner.js      Multi-sheet scan session tracking
-js/app.js               Router + every screen
+styles.css              Liquid-glass design system
+icon-192.png  icon-512.png  icon-maskable-512.png
+storage.js              localStorage persistence layer
+testManager.js          Test template CRUD
+gradingEngine.js        Pure scoring logic
+studentManager.js       Identity normalization helpers
+resultManager.js        Result persistence + class insights
+answerKeyService.js     Manual key helpers + QuestionParser (adapts aiVision output)
+aiVision.js             Real Claude API calls: question-paper reading, explanations
+omrGenerator.js         Builds + renders the exact OMR sheet template
+imageProcessor.js       Grayscale, homography math, warping, patch sampling
+omrScanner.js           Fiducial detection, rectification, bubble reading
+camera.js               getUserMedia lifecycle + live-guidance loop
+exportService.js        CSV (real) / Excel / PDF (interfaces)
+batchScanner.js         Multi-sheet scan session tracking
+app.js                  Router + every screen
 ```
 
 ## Notes on the scanner

@@ -52,7 +52,6 @@ function renderRoute() {
 window.addEventListener('hashchange', renderRoute);
 window.addEventListener('DOMContentLoaded', () => {
   initGlobalDelegation();
-  registerServiceWorker();
   renderRoute();
 });
 
@@ -1387,15 +1386,4 @@ function initGlobalDelegation() {
       default: break;
     }
   });
-}
-
-// ================================================================
-// SERVICE WORKER
-// ================================================================
-function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./service-worker.js').catch(() => {});
-    });
-  }
 }

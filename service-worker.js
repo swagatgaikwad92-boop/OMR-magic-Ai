@@ -1,73 +1,82 @@
 /* ============================================================
    service-worker.js — offline-first app shell caching.
-   Works on GitHub Pages project subpaths because every path
-   below is relative to this file's own location.
+   All paths are relative to this file, so it works on any
+   GitHub Pages project subpath (user.github.io/omr-magic/).
    ============================================================ */
 
-const CACHE_NAME = 'omr-magic-v2';
+const CACHE_PREFIX = 'omr-magic-';
+const CACHE_NAME = CACHE_PREFIX + 'v3';
 const APP_SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './css/styles.css',
-  './js/storage.js',
-  './js/testManager.js',
-  './js/gradingEngine.js',
-  './js/studentManager.js',
-  './js/resultManager.js',
-  './js/answerKeyService.js',
-  './js/aiVision.js',
-  './js/omrGenerator.js',
-  './js/imageProcessor.js',
-  './js/omrScanner.js',
-  './js/camera.js',
-  './js/exportService.js',
-  './js/batchScanner.js',
-  './js/app.js',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon-maskable-512.png',
+  './styles.css',
+  './storage.js',
+  './testManager.js',
+  './gradingEngine.js',
+  './studentManager.js',
+  './resultManager.js',
+  './answerKeyService.js',
+  './aiVision.js',
+  './omrGenerator.js',
+  './imageProcessor.js',
+  './omrScanner.js',
+  './camera.js',
+  './exportService.js',
+  './batchScanner.js',
+  './app.js',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    // Cache files one by one: a single missing file must NOT make the whole
+    // install fail (cache.addAll is all-or-nothing, which would leave the app
+    // with no working service worker and therefore not installable).
+    await Promise.all(APP_SHELL.map((url) =>
+      cache.add(url).catch((err) => console.warn('SW precache skipped', url, err))
+    ));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((names) => Promise.all(
-      names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))
-    )).then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    // Only delete OUR old caches — user.github.io is shared by every repo you own.
+    const names = await caches.keys();
+    await Promise.all(names
+      .filter((n) => n.startsWith(CACHE_PREFIX) && n !== CACHE_NAME)
+      .map((n) => caches.delete(n)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return; // fonts, API calls etc. go straight to network
 
-  // Navigation requests: try network first (fresh app), fall back to cached shell offline.
+  // Page navigations: network first (always fresh), cached shell when offline.
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req).catch(() => caches.match('./index.html'))
+      fetch(req).catch(() => caches.match('./index.html').then((r) => r || caches.match('./')))
     );
     return;
   }
 
-  // Everything else: cache-first, then network, then cache the fresh copy.
+  // Everything else: stale-while-revalidate (instant from cache, refreshed in background).
   event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req).then((res) => {
-        if (res && res.status === 200 && res.type === 'basic') {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
-        }
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(req);
+      const network = fetch(req).then((res) => {
+        if (res && res.status === 200 && res.type === 'basic') cache.put(req, res.clone());
         return res;
       }).catch(() => cached);
+      return cached || network;
     })
   );
 });

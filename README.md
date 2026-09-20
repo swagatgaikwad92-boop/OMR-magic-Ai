@@ -38,23 +38,21 @@ with a camera.
 - **Answer key** — full manual entry grid, works completely offline. Tapping
   an "AI propose" button honestly reports itself unavailable unless you wire
   up a real provider (see below) — it never fabricates an answer key.
-- **Custom OMR Creator** — generates an exact, printable bubble sheet with
-  four corner fiducial markers, downloadable as PNG or sendable straight to
-  the browser print dialog.
-- **Magic Mode scanner** — live camera guidance (move closer/farther, too
-  dark, glare, hold steady, sheet detected), auto-capture when the sheet is
-  stably framed, or manual capture / choose-from-gallery.
-- **Real computer vision, not a simulation**:
-  - detects the four corner fiducial markers in the photo
-  - solves a 4-point homography and rectifies the photo into the sheet's
-    reference coordinate space
-  - samples every bubble at its exact known template position and measures
-    fill/darkness to decide answered / blank / multiple / unclear
-  - computes genuine scan-quality metrics (sharpness, brightness, glare,
-    corner confidence, perspective distortion) and will refuse to silently
-    grade a bad scan
-  - reads roll-number bubbles the same way; **never invents an answer or an
-    identity** — anything below confidence goes to a review queue
+- **Reads ANY OMR sheet with AI (Gemini)** — no fixed template, no corner
+  markers needed. For every photo the AI first works out the sheet's own
+  layout (roll-number grid, sections, answer blocks, question numbers,
+  option letters), then reads what the student marked, the handwritten
+  name, and the roll number.
+- **Double-checked reading** — a second pass crops every answer block and
+  the roll-number grid from the full-resolution photo and reads them again,
+  zoomed in. Where both readings agree the answer is accepted; where they
+  disagree the question goes to review with the AI's best guess pre-selected
+  (one tap to accept). Blank stays blank — nothing is guessed to fill a gap.
+- **Magic Mode camera** — works with any sheet: live guidance (move
+  closer/farther, too dark, glare, hold steady), auto-capture when the page
+  is stably framed, full-resolution still capture, or choose a photo.
+- **Optional Custom OMR Creator** — prints a ready-made bubble sheet, but you
+  never need it: scan the sheets you already use.
 - **Live, progressive checking** — reveals each already-computed, real
   result one question at a time for the "magic" feel (the pacing is
   animated; the data behind it is never randomized or fake).
@@ -69,8 +67,9 @@ with a camera.
 - **History** — every test with student count and class average, rename /
   duplicate / delete.
 - **CSV export**, fully working, opens in Excel/Sheets.
-- **Offline-first** — everything above works with no network connection.
-  Service worker caches the full app shell.
+- **Works offline for everything except scanning/AI** — tests, answer keys,
+  results, insights and CSV export need no network; the app shell is cached.
+  Reading a sheet needs an internet connection and your Gemini key.
 - **Privacy controls** — delete a single result, delete a whole test, or
   wipe all local data, from Settings. Nothing is ever uploaded anywhere;
   all image processing happens in the browser on-device.
@@ -97,15 +96,12 @@ With it configured:
 - **Result screen** — an "Explain" button appears next to each wrong answer
   and generates a short, on-demand explanation. Never automatic, never
   blocks the fast-check workflow.
-- **Scanning itself is unchanged** — AI is never used to read bubble marks
-  off a scanned student sheet. That stays on the deterministic,
-  homography-based CV engine in `omrScanner.js`, which is what makes "never
-  invent a bubble location" an actual guarantee rather than a promise a
-  language model can't fully keep at pixel precision.
+- **Scanning uses AI** — see `aiScanner.js`. Because a language model can
+  misread a faint mark, the double-check pass and the review queue exist;
+  use a flat, well-lit, in-focus photo for best results.
 
-With AI Vision off (the default) or offline, every AI-touched screen falls
-back to fully manual entry — the app never blocks or degrades because AI
-isn't available.
+With AI Vision off, or offline, question-paper reading and explanations are
+unavailable and answer keys are entered manually; scanning needs AI Vision.
 
 ## What's intentionally left as a clean interface, not faked
 
@@ -141,9 +137,9 @@ studentManager.js       Identity normalization helpers
 resultManager.js        Result persistence + class insights
 answerKeyService.js     Manual key helpers + QuestionParser (adapts aiVision output)
 aiVision.js             Real Gemini API calls: question-paper reading, explanations
-omrGenerator.js         Builds + renders the exact OMR sheet template
-imageProcessor.js       Grayscale, homography math, warping, patch sampling
-omrScanner.js           Fiducial detection, rectification, bubble reading
+omrGenerator.js         Optional printable OMR sheet builder
+imageProcessor.js       Grayscale, brightness/sharpness metrics (camera guidance)
+aiScanner.js            Gemini-based layout understanding + mark reading + verification
 camera.js               getUserMedia lifecycle + live-guidance loop
 exportService.js        CSV (real) / Excel / PDF (interfaces)
 batchScanner.js         Multi-sheet scan session tracking
@@ -152,9 +148,11 @@ app.js                  Router + every screen
 
 ## Notes on the scanner
 
-OMR Magic can only reliably score sheets it generated itself (via **Custom
-OMR Creator** in a test's **OMR sheet** screen), because the scanner reads
-bubbles at exact coordinates from that sheet's own template — that's what
-makes the recognition genuinely dependable instead of a generic, fragile
-"guess the grid" algorithm. Print the generated sheet for your class; don't
-substitute a hand-made one.
+Scanning is AI-driven, so it works on sheets from any source — including
+ones printed elsewhere. For best accuracy: lay the sheet flat, fill the frame
+with the whole page (all edges visible), use even light without glare, and
+keep the camera steady. The **Double-check scans** switch in Settings
+(default on) trades ~5 API requests per sheet for higher accuracy; the free
+Gemini tier has per-minute limits, so for big batches switch it off or use a
+paid key. Anything the two readings disagree on is put in front of you for a
+one-tap confirmation.

@@ -36,6 +36,9 @@ const GradingEngine = (() => {
         detected: det.option,
         status: det.status,
         confidence: det.confidence,
+        reason: det.reason || null,               // why a question was flagged (disagree / low / range / missing)
+        suggested: det.suggested === undefined ? null : det.suggested, // AI's best guess for flagged questions
+        suggestedBlank: !!det.suggestedBlank,
         correctOption: key,
         outcome,
         marks,

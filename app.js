@@ -637,7 +637,7 @@ function renderOmrSheet(testId) {
     ${bgBubbles()}
     ${topbar('OMR sheet')}
     <div class="screen" style="padding-top:4px;">
-      <div class="banner banner-info mb-16">Print this exact sheet for every student. The corner markers are what OMR Magic uses to read it — don\u2019t crop or staple over them.</div>
+      <div class="banner banner-info mb-16">Optional: a ready-made sheet you can print. You don\u2019t need it — OMR Magic\u2019s AI can read any OMR sheet you already use. Just scan it.</div>
       <div class="omr-preview mb-16">
         <canvas id="omr-canvas"></canvas>
       </div>
@@ -681,9 +681,27 @@ let scanCtx = null; // { test, mode, batchSession }
 function renderScan(testId, mode) {
   const test = TestManager.getById(testId);
   if (!test || !TestManager.isReady(test)) { toast('Approve the answer key first'); navigate('#/history'); return; }
-  if (!test.omrTemplate) { toast('Generate the OMR sheet for this test first'); navigate(`#/omr-sheet/${testId}`); return; }
   scanCtx = { test, mode, batchSession: mode === 'batch' ? BatchScanner.createSession(testId, null) : null };
+  if (!AIVision.isConfigured()) { showAiRequired(); return; }
   showCameraPhase();
+}
+
+// Sheets are read by AI (any layout), so scanning needs a Gemini key.
+function showAiRequired() {
+  const { test } = scanCtx;
+  root().innerHTML = `
+    ${bgBubbles()}
+    ${topbar('Scan OMR', { noBack: false })}
+    <div class="screen" style="padding-top:20px;">
+      <div class="glass glass-panel text-center">
+        <div style="font-size:38px;">✨</div>
+        <div class="fw mt-8 mb-8" style="font-size:17px;">Turn on AI Vision to scan</div>
+        <div class="muted small mb-16">OMR Magic uses Gemini to understand any OMR sheet — where the roll number, sections, question numbers and answers are — and to read the marks. Add your free Gemini API key once and you\u2019re set.</div>
+        <button class="btn btn-primary btn-block" data-action="goto" data-href="#/settings">Open Settings</button>
+        <button class="btn btn-ghost btn-block mt-8" data-action="goto" data-href="#/test/${test.id}">Back</button>
+      </div>
+    </div>
+  `;
 }
 
 function showCameraPhase() {
@@ -711,7 +729,7 @@ function showCameraPhase() {
         <div class="shutter" id="shutter-btn" aria-label="Capture"></div>
         <div class="sc-side-btn" id="toggle-auto-btn" aria-label="Toggle auto capture">⚡</div>
       </div>
-      <input type="file" id="file-input" accept="image/*" capture="environment" class="hidden">
+      <input type="file" id="file-input" accept="image/*" class="hidden">
     </div>
   `;
 
@@ -733,7 +751,7 @@ function showCameraPhase() {
         (analysis.allFound ? 40 : 0) + Math.min(1, analysis.sharpness / 40) * 35 + Math.min(1, analysis.brightness / 180) * 25
       )));
       qualityTag.classList.remove('hidden');
-      qualityTag.textContent = `Scan quality ${rough}%`;
+      qualityTag.textContent = `Frame quality ${rough}%`;
     },
     onAutoCaptureReady() { triggerCapture(); },
   }).then(res => {
@@ -764,8 +782,12 @@ function showCameraPhase() {
     processCapturedCanvas(canvas);
   });
 
-  function triggerCapture() {
-    const canvas = CameraController.captureFullResolution();
+  let capturing = false;
+  async function triggerCapture() {
+    if (capturing) return;
+    capturing = true;
+    guidanceText.textContent = 'Capturing…';
+    const canvas = await CameraController.captureStill();
     CameraController.stop();
     if (!canvas) { toast('Couldn\u2019t capture — try again'); showCameraPhase(); return; }
     processCapturedCanvas(canvas);
@@ -778,11 +800,13 @@ function showProcessingPhase() {
     <div class="screen" style="padding-top:40px; align-items:center;">
       <div class="ai-pill" style="margin:0 auto;"><span class="dot"></span>Understanding sheet…</div>
       <div class="ai-processing-list" id="ai-steps" style="width:100%; max-width:340px; margin-left:auto; margin-right:auto;">
-        <div class="ai-step active" id="step-layout"><div class="step-icon">1</div><div class="step-label">Detecting layout</div></div>
-        <div class="ai-step" id="step-map"><div class="step-icon">2</div><div class="step-label">Mapping answer bubbles</div></div>
-        <div class="ai-step" id="step-marks"><div class="step-icon">3</div><div class="step-label">Detecting student marks</div></div>
+        <div class="ai-step active" id="step-layout"><div class="step-icon">1</div><div class="step-label">Understanding the sheet layout</div></div>
+        <div class="ai-step" id="step-map"><div class="step-icon">2</div><div class="step-label">Finding roll no., sections &amp; answers</div></div>
+        <div class="ai-step" id="step-marks"><div class="step-icon">3</div><div class="step-label">Double-checking marks (zoomed)</div></div>
         <div class="ai-step" id="step-check"><div class="step-icon">4</div><div class="step-label">Checking answers</div></div>
       </div>
+      <div class="muted small text-center mt-16" id="ai-layout-summary" style="max-width:320px; margin-left:auto; margin-right:auto; min-height:20px;"></div>
+      <div class="muted small text-center mt-8" style="max-width:320px; margin-left:auto; margin-right:auto;">This takes 10–40 seconds. Keep this screen open.</div>
     </div>
   `;
 }
@@ -795,29 +819,33 @@ function advanceProcessingStep(stepId, state) {
   if (state === 'done') el.querySelector('.step-icon').textContent = '✓';
 }
 
-function processCapturedCanvas(canvas) {
+async function processCapturedCanvas(canvas) {
   showProcessingPhase();
   const { test } = scanCtx;
+  const myScan = scanCtx;
 
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const res = OmrScanner.processCapturedImage(canvas, test.omrTemplate);
-    const steps = ['step-layout', 'step-map', 'step-marks', 'step-check'];
-    const failedAt = res.success ? null
-      : (res.reason === 'sheet_not_detected' ? 0 : 1);
-
-    let i = 0;
-    (function tick() {
-      if (failedAt !== null && i === failedAt + 1) {
-        setTimeout(() => showScanError(res.message), 380);
-        return;
+  const res = await AIScanner.scanSheet(canvas, test, {
+    onStage({ stage, detail }) {
+      if (scanCtx !== myScan) return; // user navigated away
+      if (stage === 'mapped') {
+        advanceProcessingStep('step-layout', 'done');
+        advanceProcessingStep('step-map', 'done');
+        const el = document.getElementById('ai-layout-summary');
+        if (el && detail) el.textContent = detail;
+        advanceProcessingStep('step-marks', 'active');
+      } else if (stage === 'verify') {
+        advanceProcessingStep('step-marks', 'active');
+      } else if (stage === 'grade') {
+        advanceProcessingStep('step-marks', 'done');
+        advanceProcessingStep('step-check', 'active');
       }
-      if (i > 0) advanceProcessingStep(steps[i - 1], 'done');
-      if (i >= steps.length) { setTimeout(() => finishProcessing(res), 260); return; }
-      advanceProcessingStep(steps[i], 'active');
-      i++;
-      setTimeout(tick, 210);
-    })();
-  }));
+    },
+  });
+  if (scanCtx !== myScan) return;
+
+  if (!res.success) { showScanError(res.message, res.reason); return; }
+  advanceProcessingStep('step-check', 'done');
+  setTimeout(() => { if (scanCtx === myScan) finishProcessing(res); }, 350);
 }
 
 function finishProcessing(res) {
@@ -825,7 +853,7 @@ function finishProcessing(res) {
   scanCtx.rawResult = res;
   scanCtx.graded = GradingEngine.grade(res.detectedAnswers, test.answerKey, test.marking);
   scanCtx.identity = StudentManager.normalizeIdentity({
-    name: null,
+    name: res.studentName,
     rollNumber: res.rollNumberResult ? res.rollNumberResult.rollNumber : null,
     rollConfidence: res.rollNumberResult ? res.rollNumberResult.confidence : null,
   });
@@ -833,18 +861,22 @@ function finishProcessing(res) {
   else afterQualityAccepted();
 }
 
-function showScanError(message) {
+function showScanError(message, reason) {
+  const needsSettings = reason === 'not_configured';
   root().innerHTML = `
     <div class="scanner-wrap" style="align-items:center; justify-content:center; padding:30px;">
       <div class="glass glass-panel" style="background:rgba(255,255,255,0.9);">
         <div class="fw mb-8">Couldn\u2019t read that scan</div>
         <div class="muted small mb-16">${escapeHtml(message)}</div>
-        <button class="btn btn-primary btn-block" id="retry-scan">Try again</button>
+        ${needsSettings
+          ? '<button class="btn btn-primary btn-block" data-action="goto" data-href="#/settings">Open Settings</button>'
+          : '<button class="btn btn-primary btn-block" id="retry-scan">Try again</button>'}
         <button class="btn btn-ghost btn-block mt-8" id="cancel-scan">Cancel</button>
       </div>
     </div>
   `;
-  document.getElementById('retry-scan').addEventListener('click', showCameraPhase);
+  const retry = document.getElementById('retry-scan');
+  if (retry) retry.addEventListener('click', showCameraPhase);
   document.getElementById('cancel-scan').addEventListener('click', () => navigate(`#/test/${scanCtx.test.id}`));
 }
 
@@ -852,8 +884,8 @@ function showQualityGate(quality) {
   root().innerHTML = `
     <div class="scanner-wrap" style="align-items:center; justify-content:center; padding:30px;">
       <div class="glass glass-panel" style="background:rgba(255,255,255,0.92);">
-        <div class="fw mb-8">Scan quality: ${quality.score}%</div>
-        <div class="muted small mb-16">${quality.warnings.length ? escapeHtml(quality.warnings.join(' · ')) : 'This scan looks a little unreliable.'} Results may need extra review.</div>
+        <div class="fw mb-8">Reading confidence: ${quality.score}%</div>
+        <div class="muted small mb-16">${quality.warnings.length ? escapeHtml(quality.warnings.join(' · ')) : 'This photo looks a little unreliable.'} Results may need extra review — a sharper, flatter photo usually fixes it.</div>
         <button class="btn btn-primary btn-block" id="retake-scan">Retake</button>
         <button class="btn btn-glass btn-block mt-8" id="continue-scan">Continue anyway</button>
       </div>
@@ -949,13 +981,25 @@ function showReviewQueue(flagged) {
 }
 
 function reviewCardHtml(pq, test) {
-  const reason = pq.outcome === 'invalid' ? 'Multiple marks' : (pq.confidence < 0.45 ? 'Low confidence' : 'Unclear');
+  const reasons = {
+    disagree: 'The two AI readings disagree',
+    low: 'Faint or unclear mark',
+    range: 'Marked option is outside this test\u2019s options',
+    missing: 'AI couldn\u2019t see this row clearly',
+  };
+  const reason = pq.outcome === 'invalid' ? 'More than one bubble is marked' : (reasons[pq.reason] || 'Unclear');
+  const hasSuggestion = pq.suggested !== null && pq.suggested !== undefined && pq.suggested < test.numOptions;
+  const acceptBtn = hasSuggestion
+    ? `<button class="btn btn-sm btn-primary" data-rc-action="accept" data-sug="${pq.suggested}">AI suggests ${OmrGenerator.optionLetter(pq.suggested)} — accept</button>`
+    : '';
+  const unansweredCls = pq.suggestedBlank ? 'btn-primary' : 'btn-glass';
   return `
     <div class="review-card" id="rc-${pq.index}" data-q="${pq.index}">
       <div class="rc-q">Question ${pq.index + 1}</div>
       <div class="rc-reason">${reason}</div>
       <div class="review-actions">
-        <button class="btn btn-sm btn-glass" data-rc-action="unanswered">Mark unanswered</button>
+        ${acceptBtn}
+        <button class="btn btn-sm ${unansweredCls}" data-rc-action="unanswered">${pq.suggestedBlank ? 'Looks blank — mark unanswered' : 'Mark unanswered'}</button>
         <button class="btn btn-sm btn-glass" data-rc-action="change">Change answer</button>
         <button class="btn btn-sm btn-glass" data-rc-action="review-image">Review image</button>
       </div>
@@ -969,8 +1013,9 @@ function wireReviewCards() {
       btn.addEventListener('click', () => {
         const action = btn.getAttribute('data-rc-action');
         if (action === 'unanswered') resolveReviewQuestion(qi, null);
+        else if (action === 'accept') resolveReviewQuestion(qi, parseInt(btn.getAttribute('data-sug'), 10));
         else if (action === 'change') openChangeAnswerSheet(qi);
-        else if (action === 'review-image') openImageReview();
+        else if (action === 'review-image') openImageReview(qi);
       });
     });
   });
@@ -993,11 +1038,12 @@ function openChangeAnswerSheet(qIndex) {
   });
 }
 
-function openImageReview() {
+function openImageReview(qIndex) {
   const { rawResult } = scanCtx;
+  const crop = (rawResult.blockCrops || []).find(c => qIndex + 1 >= c.first && qIndex + 1 <= c.last);
   openSheet(`
-    <div class="section-title" style="margin-top:0;">Scanned sheet</div>
-    <img src="${rawResult.previewDataUrl}" style="width:100%; border-radius:14px;">
+    <div class="section-title" style="margin-top:0;">${crop ? `Question ${qIndex + 1} — zoomed block` : 'Scanned sheet'}</div>
+    <img src="${crop ? crop.dataUrl : rawResult.previewDataUrl}" style="width:100%; border-radius:14px;">
   `);
 }
 
@@ -1074,7 +1120,7 @@ function renderResult(resultId) {
         <div class="sg-item"><div class="sg-num" style="color:#9A7A1A;">? ${g.unclear}</div><div class="sg-label">UNCLEAR</div></div>
       </div>
 
-      ${result.scanQuality ? `<div class="muted small mb-16 text-center">Scan quality ${result.scanQuality.score}% · Average confidence ${Math.round(g.avgConfidence * 100)}%</div>` : ''}
+      ${result.scanQuality ? `<div class="muted small mb-16 text-center">Read by AI · confidence ${result.scanQuality.score}%${result.scanQuality.verified ? ' · double-checked' : ''}${result.scanQuality.summary ? '<br>' + escapeHtml(result.scanQuality.summary) : ''}${(result.scanQuality.notes || []).map(n => '<br>' + escapeHtml(n)).join('')}</div>` : ''}
 
       <div class="section-title">Question review</div>
       <div class="glass glass-panel">
@@ -1200,13 +1246,17 @@ function renderSettings() {
     ${bgBubbles()}
     ${topbar('Settings & privacy')}
     <div class="screen" style="padding-top:4px;">
-      <div class="banner banner-info mb-16">Everything is processed and stored on this device. Nothing is uploaded unless you connect an external AI service below.</div>
+      <div class="banner banner-info mb-16">Your tests, answer keys and results are stored only on this device. Photos are sent to Google\u2019s Gemini API (using your own key) only when you scan a sheet or use AI features.</div>
 
       <div class="section-title">AI Vision</div>
       <div class="glass glass-panel mb-16">
         <div class="toggle-row">
-          <div><div class="tr-label">Enable AI Vision</div><div class="tr-sub">Reads question papers and proposes answer keys</div></div>
+          <div><div class="tr-label">Enable AI Vision</div><div class="tr-sub">Required for scanning: reads any OMR sheet, question papers and more</div></div>
           <div class="switch ${aiCfg.enabled ? 'on' : ''}" id="sw-ai-enabled"></div>
+        </div>
+        <div class="toggle-row mt-12">
+          <div><div class="tr-label">Double-check scans</div><div class="tr-sub">Re-reads every block zoomed in. More accurate; uses ~5 requests per sheet</div></div>
+          <div class="switch ${aiCfg.verifyScans !== false ? 'on' : ''}" id="sw-ai-verify"></div>
         </div>
         <div class="field mt-12">
           <label>Gemini API key</label>
@@ -1218,6 +1268,7 @@ function renderSettings() {
             <option value="gemini-3.8-flash" ${aiCfg.model === 'gemini-3.8-flash' ? 'selected' : ''}>Gemini 3.8 Flash (recommended)</option>
             <option value="gemini-3.5-flash-lite" ${aiCfg.model === 'gemini-3.5-flash-lite' ? 'selected' : ''}>Gemini 3.5 Flash-Lite (fastest, cheapest)</option>
             <option value="gemini-2.5-flash" ${aiCfg.model === 'gemini-2.5-flash' ? 'selected' : ''}>Gemini 2.5 Flash</option>
+            <option value="gemini-3.1-pro-preview" ${aiCfg.model === 'gemini-3.1-pro-preview' ? 'selected' : ''}>Gemini 3.1 Pro (most accurate, slower)</option>
           </select>
         </div>
         <div class="muted small mb-12">Your key is stored only in this browser\u2019s local storage and is sent directly to Google\u2019s Gemini API \u2014 never bundled in the app, never sent anywhere else. Get a free key at aistudio.google.com/apikey. Since this is a static site with no backend, anyone with access to this device/browser could read the key from local storage; use a key with a low spending limit.</div>
@@ -1241,26 +1292,31 @@ function renderSettings() {
 
       <div class="section-title">About</div>
       <div class="glass glass-panel">
-        <div class="muted small">OMR Magic grades scanned answer sheets entirely offline using its own computer-vision engine. AI Vision, above, is optional and only used to help set up an answer key from a question paper photo, and to explain wrong answers on request.</div>
+        <div class="muted small">OMR Magic uses Gemini AI to understand the layout of any OMR sheet (roll number, sections, question numbers, options) and to read the marks, then grades them against your answer key on this device. Sheet photos are sent to Google\u2019s Gemini API only while scanning; your tests, results and key stay on this device.</div>
       </div>
     </div>
   `;
 
   let pendingEnabled = aiCfg.enabled;
+  let pendingVerify = aiCfg.verifyScans !== false;
   document.getElementById('sw-ai-enabled').addEventListener('click', (e) => {
     pendingEnabled = !pendingEnabled;
     e.target.classList.toggle('on', pendingEnabled);
   });
+  document.getElementById('sw-ai-verify').addEventListener('click', (e) => {
+    pendingVerify = !pendingVerify;
+    e.target.classList.toggle('on', pendingVerify);
+  });
   document.getElementById('save-ai-config').addEventListener('click', () => {
     const apiKey = document.getElementById('ai-key-input').value.trim();
     const model = document.getElementById('ai-model-select').value;
-    AIVision.setConfig({ apiKey, model, enabled: pendingEnabled });
+    AIVision.setConfig({ apiKey, model, enabled: pendingEnabled, verifyScans: pendingVerify });
     toast('AI settings saved');
   });
   document.getElementById('test-ai-connection').addEventListener('click', async () => {
     const apiKey = document.getElementById('ai-key-input').value.trim();
     const model = document.getElementById('ai-model-select').value;
-    AIVision.setConfig({ apiKey, model, enabled: true });
+    AIVision.setConfig({ apiKey, model, enabled: true, verifyScans: pendingVerify });
     document.getElementById('sw-ai-enabled').classList.add('on');
     pendingEnabled = true;
     const resultEl = document.getElementById('ai-test-result');

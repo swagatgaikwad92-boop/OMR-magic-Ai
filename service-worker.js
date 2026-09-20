@@ -5,7 +5,7 @@
    ============================================================ */
 
 const CACHE_PREFIX = 'omr-magic-';
-const CACHE_NAME = CACHE_PREFIX + 'v4';
+const CACHE_NAME = CACHE_PREFIX + 'v5';
 const APP_SHELL = [
   './',
   './index.html',
@@ -20,7 +20,7 @@ const APP_SHELL = [
   './aiVision.js',
   './omrGenerator.js',
   './imageProcessor.js',
-  './omrScanner.js',
+  './aiScanner.js',
   './camera.js',
   './exportService.js',
   './batchScanner.js',

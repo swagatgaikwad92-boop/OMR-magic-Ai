@@ -16,11 +16,8 @@
 
    AI is used here for UNDERSTANDING (reading a question paper,
    proposing an answer key with visible confidence + reasoning,
-   explaining a wrong answer) — never for reading the actual
-   bubble marks on a scanned student sheet. That grading stays on
-   omrScanner.js's deterministic, inspectable computer-vision
-   engine, which is what makes "never invent a bubble location"
-   an actual guarantee rather than a promise.
+   explaining a wrong answer) and, via aiScanner.js, understanding and
+   reading any OMR sheet photo.
    ============================================================ */
 
 const AIVision = (() => {
@@ -29,13 +26,14 @@ const AIVision = (() => {
   const DEFAULT_MODEL = 'gemini-3.8-flash';
 
   function getConfig() {
-    const blank = { apiKey: '', model: DEFAULT_MODEL, enabled: false };
+    const blank = { apiKey: '', model: DEFAULT_MODEL, enabled: false, verifyScans: true };
     try {
       const raw = localStorage.getItem(CONFIG_KEY);
       if (!raw) return blank;
       const cfg = JSON.parse(raw);
       // A config saved by an older version (different AI provider) is useless now: drop it.
       if (!cfg.model || !/^gemini/i.test(cfg.model)) return blank;
+      if (cfg.verifyScans === undefined) cfg.verifyScans = true;
       return cfg;
     } catch (e) {
       return blank;
@@ -55,39 +53,65 @@ const AIVision = (() => {
     return typeof navigator !== 'undefined' ? navigator.onLine : true;
   }
 
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
   // Calls Gemini's generateContent. `parts` is an array of Gemini parts
   // ({text} or {inlineData}). Returns the model's text.
-  async function callGemini(parts, { maxTokens = 2000, json = false } = {}) {
+  // Retries transient failures (429 / 5xx / network) with backoff, and
+  // gives up on a hung request after `timeoutMs`.
+  async function callGemini(parts, { maxTokens = 2000, json = false, timeoutMs = 120000, retries = 2 } = {}) {
     const cfg = getConfig();
     const model = encodeURIComponent(cfg.model || DEFAULT_MODEL);
     const generationConfig = { maxOutputTokens: maxTokens };
     if (json) generationConfig.responseMimeType = 'application/json';
-    const res = await fetch(`${API_BASE}${model}:generateContent`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-goog-api-key': cfg.apiKey.trim(),
-      },
-      body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig }),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      let msg = text.slice(0, 200);
-      try { msg = JSON.parse(text).error.message || msg; } catch (e) { /* keep raw */ }
-      throw new Error(`API error ${res.status}: ${msg}`);
+    const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig });
+
+    let lastErr = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(`${API_BASE}${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': cfg.apiKey.trim() },
+          body,
+          signal: ctrl.signal,
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          let msg = text.slice(0, 200);
+          try { msg = JSON.parse(text).error.message || msg; } catch (e) { /* keep raw */ }
+          const err = new Error(`API error ${res.status}: ${msg}`);
+          err.status = res.status;
+          if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+            lastErr = err; await sleep(1800 * (attempt + 1) * (res.status === 429 ? 2 : 1)); continue;
+          }
+          if (res.status === 429) err.message = 'Gemini rate limit reached (free keys allow only a few requests per minute). Wait a minute and try again.';
+          throw err;
+        }
+        const data = await res.json();
+        if (data.promptFeedback && data.promptFeedback.blockReason) {
+          throw new Error('Request blocked by Gemini (' + data.promptFeedback.blockReason + ')');
+        }
+        const cand = (data.candidates || [])[0];
+        const out = cand && cand.content && cand.content.parts
+          ? cand.content.parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('')
+          : '';
+        if (!out && cand && cand.finishReason && cand.finishReason !== 'STOP') {
+          throw new Error('Gemini returned no text (' + cand.finishReason + ')');
+        }
+        return out;
+      } catch (e) {
+        if (e.name === 'AbortError') e = new Error('Gemini took too long to answer. Check your connection and try again.');
+        lastErr = e;
+        const transient = e.status === undefined && attempt < retries; // network failure / timeout
+        if (transient) { await sleep(1500 * (attempt + 1)); continue; }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    const data = await res.json();
-    if (data.promptFeedback && data.promptFeedback.blockReason) {
-      throw new Error('Request blocked by Gemini (' + data.promptFeedback.blockReason + ')');
-    }
-    const cand = (data.candidates || [])[0];
-    const out = cand && cand.content && cand.content.parts
-      ? cand.content.parts.filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('')
-      : '';
-    if (!out && cand && cand.finishReason && cand.finishReason !== 'STOP') {
-      throw new Error('Gemini returned no text (' + cand.finishReason + ')');
-    }
-    return out;
+    throw lastErr || new Error('Gemini request failed');
   }
 
   function extractJson(text) {
@@ -190,5 +214,5 @@ In 2-3 short sentences, explain why the correct answer is right and briefly note
     }
   }
 
-  return { getConfig, setConfig, isConfigured, isOnline, analyzeQuestionPaper, explainAnswer, testConnection, DEFAULT_MODEL };
+  return { getConfig, setConfig, isConfigured, isOnline, analyzeQuestionPaper, explainAnswer, testConnection, generate: callGemini, extractJson, DEFAULT_MODEL };
 })();

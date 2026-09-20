@@ -2,10 +2,8 @@
    omrGenerator.js — Custom OMR Creator.
    Builds an exact geometric template (every fiducial marker and
    every bubble's reference-space coordinate) and renders it to a
-   printable canvas. The SAME template is later used by
-   omrScanner.js to know exactly where to look on a scanned photo —
-   that's what makes real bubble reading possible without a
-   generic (and unreliable) grid-guessing algorithm.
+   printable canvas. This is an OPTIONAL convenience: scanning is done
+   by AI (aiScanner.js) and works on any OMR sheet, generated or not.
 
    Reference space: a fixed virtual page, 1000 x 1414 units
    (A4 proportions), regardless of final render/print resolution.

@@ -36,53 +36,43 @@ const AnswerKeyService = (() => {
 
 /* ============================================================
    questionParser.js — AI-assisted question paper -> answer key
-   pipeline interface.
-
-   HONESTY NOTE: OMR Magic does not ship with a hardcoded AI
-   provider or API key. This module defines the clean pipeline
-   interface described in the product spec (OCR -> segmentation
-   -> option extraction -> reasoning -> proposed key), but the
-   actual model call is left as a single swappable function,
-   `callAIProvider`, that a deployer can wire up to whatever
-   service they choose. Until it's configured, or when the
-   device is offline, this module reports itself unavailable
-   rather than pretending to work — no random or fabricated
-   answers are ever produced.
+   pipeline. Thin wrapper around aiVision.js that adapts its
+   richer output into the shape the Answer Key screen consumes,
+   and centralizes the "not configured / offline" fallbacks so
+   callers never have to fabricate anything themselves.
    ============================================================ */
 
 const QuestionParser = (() => {
-  // Deployers: replace this function to call your AI provider of choice.
-  // It must return null (not throw) if not configured, so the UI can
-  // fall back to manual entry cleanly.
-  async function callAIProvider(/* imageOrPdfDataUrl */) {
-    return null; // not configured in this build
-  }
-
-  function isConfigured() {
-    // Overwrite / detect real configuration here once an endpoint exists.
-    return false;
-  }
-
-  function isOnline() {
-    return typeof navigator !== 'undefined' ? navigator.onLine : true;
-  }
+  function isConfigured() { return AIVision.isConfigured(); }
+  function isOnline() { return AIVision.isOnline(); }
 
   async function proposeAnswerKey(questionPaperDataUrl, numQuestions) {
-    if (!isOnline()) {
-      return { ok: false, reason: 'offline', message: 'AI unavailable offline' };
+    if (!questionPaperDataUrl) {
+      return { ok: false, reason: 'no_image', message: 'Upload or photograph the question paper first.' };
     }
-    if (!isConfigured()) {
-      return { ok: false, reason: 'not_configured', message: 'AI question reading isn\u2019t set up on this deployment yet. Use manual entry below.' };
-    }
-    try {
-      const result = await callAIProvider(questionPaperDataUrl);
-      if (!result) return { ok: false, reason: 'no_result', message: 'Couldn\u2019t read the question paper. Use manual entry below.' };
-      // Expected shape from a real provider: { answers: [{index, optionIndex, confidence}], questionCount }
-      return { ok: true, proposedKey: result.answers, questionCount: result.questionCount };
-    } catch (e) {
-      return { ok: false, reason: 'error', message: 'AI reading failed. Use manual entry below.' };
-    }
+    const result = await AIVision.analyzeQuestionPaper(questionPaperDataUrl, numQuestions);
+    if (!result.ok) return result;
+
+    const proposedKey = result.questions.map(q => ({
+      index: q.index,
+      optionIndex: q.proposedAnswer ? q.proposedAnswer.optionIndex : null,
+      confidence: q.proposedAnswer ? q.proposedAnswer.confidence : null,
+      reasoning: q.proposedAnswer ? q.proposedAnswer.reasoning : null,
+      questionText: q.questionText || null,
+      source: 'ai_inferred',
+    }));
+
+    return {
+      ok: true,
+      proposedKey,
+      detectedNumQuestions: result.numQuestions,
+      detectedNumOptions: result.numOptions,
+      hasStudentNameField: result.hasStudentNameField,
+      hasRollNumberField: result.hasRollNumberField,
+      notes: result.notes || '',
+    };
   }
 
   return { proposeAnswerKey, isConfigured, isOnline };
 })();
+

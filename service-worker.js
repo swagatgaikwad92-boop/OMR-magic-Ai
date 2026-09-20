@@ -4,7 +4,7 @@
    below is relative to this file's own location.
    ============================================================ */
 
-const CACHE_NAME = 'omr-magic-v1';
+const CACHE_NAME = 'omr-magic-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const APP_SHELL = [
   './js/studentManager.js',
   './js/resultManager.js',
   './js/answerKeyService.js',
+  './js/aiVision.js',
   './js/omrGenerator.js',
   './js/imageProcessor.js',
   './js/omrScanner.js',

@@ -137,7 +137,8 @@ function renderHome() {
       <div class="home-hero">
         <div class="magic-orb" aria-hidden="true"></div>
         <p class="brand">OMR Magic</p>
-        <p class="tagline">Smart OMR checking.</p>
+        <p class="tagline">Scan. Understand. Check.</p>
+        <div class="mt-12" id="ai-status-pill"></div>
       </div>
 
       <button class="btn btn-primary btn-block" data-action="start-test" style="font-size:17px; padding:19px;">Start a test ${iconChevronRight()}</button>
@@ -157,6 +158,9 @@ function renderHome() {
       </div>
     </div>
   `;
+  const pillEl = document.getElementById('ai-status-pill');
+  const aiOn = AIVision.isConfigured();
+  pillEl.innerHTML = `<span class="ai-pill ${aiOn ? '' : 'offline'}"><span class="dot"></span>${aiOn ? 'AI Vision Ready' : 'AI Vision off \u2014 set up in Settings'}</span>`;
 }
 
 function readyTestsList() {
@@ -282,7 +286,7 @@ function renderTestDetail(testId) {
         </div>
         ${insights.mostMissed && insights.mostMissed.length ? `
           <div class="section-title">Most missed</div>
-          <div class="glass glass-panel">
+          <div class="glass glass-panel analytics-glass">
             ${insights.mostMissed.map(m => `
               <div class="flex" style="justify-content:space-between; padding:8px 0;">
                 <span class="fw small">Question ${m.index + 1}</span>
@@ -461,9 +465,10 @@ function renderAnswerKey(testId) {
   if (!test) { navigate('#/history'); return; }
   Forms.answerKeyDraft = Forms.answerKeyDraft && Forms.answerKeyDraft.testId === testId
     ? Forms.answerKeyDraft
-    : { testId, key: test.answerKey.slice() };
+    : { testId, key: test.answerKey.slice(), meta: (test.answerKeyMeta && test.answerKeyMeta.length === test.numQuestions) ? test.answerKeyMeta.slice() : new Array(test.numQuestions).fill(null) };
   const draft = Forms.answerKeyDraft;
   const stats = AnswerKeyService.completionStats(draft.key);
+  const aiReady = AIVision.isConfigured();
 
   root().innerHTML = `
     ${bgBubbles()}
@@ -479,11 +484,13 @@ function renderAnswerKey(testId) {
         <div class="muted small mt-8">Tap the correct option for each question. Works completely offline.</div>
       </div>
 
-      <div class="banner banner-info mb-16" id="ai-banner" style="display:none;"></div>
-      <button class="btn btn-glass btn-block mb-16" data-action="ai-propose-key" data-id="${test.id}">✨ Let AI read the question paper</button>
+      <div class="banner banner-ai mb-16" id="ai-banner" style="display:none;"></div>
+      <button class="btn btn-glass btn-block mb-16" data-action="ai-propose-key" data-id="${test.id}">
+        ${aiReady ? '✨ Let AI read the question paper' : '✨ AI question reading (set up in Settings)'}
+      </button>
 
       <div class="akey-grid" id="akey-grid">
-        ${test.answerKey.map((_, i) => renderAkeyRow(i, draft.key[i], test.numOptions)).join('')}
+        ${test.answerKey.map((_, i) => renderAkeyRow(i, draft.key[i], test.numOptions, draft.meta[i])).join('')}
       </div>
 
       <button class="btn btn-primary btn-block mt-24" data-action="approve-key" data-id="${test.id}" ${stats.complete ? '' : 'disabled'}>
@@ -492,44 +499,111 @@ function renderAnswerKey(testId) {
     </div>
   `;
 
+  wireAkeyGrid(testId);
+}
+
+function wireAkeyGrid(testId) {
+  const draft = Forms.answerKeyDraft;
   document.getElementById('akey-grid').querySelectorAll('.akey-opt').forEach(el => {
     el.addEventListener('click', () => {
       const q = parseInt(el.getAttribute('data-q'), 10);
       const o = parseInt(el.getAttribute('data-o'), 10);
       draft.key = AnswerKeyService.setAnswer(draft.key, q, o);
+      draft.meta[q] = { source: 'manual', confidence: null, reasoning: null, questionText: draft.meta[q] ? draft.meta[q].questionText : null };
       renderAnswerKey(testId);
+    });
+  });
+  document.getElementById('akey-grid').querySelectorAll('[data-info-q]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const q = parseInt(el.getAttribute('data-info-q'), 10);
+      const m = draft.meta[q];
+      openSheet(`
+        <div class="section-title" style="margin-top:0;">Question ${q + 1} — AI reasoning</div>
+        ${m && m.questionText ? `<div class="muted small mb-8">${escapeHtml(m.questionText)}</div>` : ''}
+        <div class="explain-box">${escapeHtml(m && m.reasoning ? m.reasoning : 'No reasoning provided.')}</div>
+        ${m && m.confidence !== null && m.confidence !== undefined ? `<div class="muted small mt-12">AI confidence: ${Math.round(m.confidence * 100)}%</div>` : ''}
+      `);
     });
   });
 }
 
-function renderAkeyRow(qIndex, selected, numOptions) {
+function renderAkeyRow(qIndex, selected, numOptions, meta) {
+  const isAi = meta && meta.source === 'ai_inferred';
+  const conf = isAi && meta.confidence !== null && meta.confidence !== undefined ? Math.round(meta.confidence * 100) : null;
+  const confColor = conf === null ? 'var(--neutral)' : conf >= 75 ? 'var(--mint)' : conf >= 45 ? 'var(--banana)' : 'var(--coral)';
   return `
-    <div class="akey-row">
-      <div class="akey-q">Q${qIndex + 1}</div>
+    <div class="akey-row ${isAi ? 'src-ai' : ''}">
+      <div class="akey-q">Q${qIndex + 1}${isAi ? `<span class="akey-source-tag badge-ai" data-info-q="${qIndex}">AI</span>` : ''}</div>
       <div class="akey-opts">
         ${Array.from({ length: numOptions }).map((_, o) => `
           <div class="akey-opt ${selected === o ? 'sel' : ''}" data-q="${qIndex}" data-o="${o}">${OmrGenerator.optionLetter(o)}</div>
         `).join('')}
       </div>
+      ${conf !== null ? `<div style="width:44px; flex-shrink:0;"><div class="confidence-bar"><div class="fill" style="width:${conf}%; background:${confColor};"></div></div></div>` : ''}
     </div>`;
 }
 
 async function handleAiProposeKey(testId) {
   const test = TestManager.getById(testId);
-  const banner = document.getElementById('ai-banner');
-  banner.style.display = 'flex';
-  banner.className = 'banner banner-info mb-16';
-  banner.textContent = 'Reading the question paper…';
-  const res = await QuestionParser.proposeAnswerKey(test.questionPaper ? test.questionPaper.dataUrl : null, test.numQuestions);
-  if (!res.ok) {
-    banner.className = 'banner ' + (res.reason === 'offline' ? 'banner-warn' : 'banner-warn') + ' mb-16';
-    banner.textContent = res.message;
+  if (!AIVision.isConfigured()) {
+    openSheet(`
+      <div class="section-title" style="margin-top:0;">AI Vision isn\u2019t set up yet</div>
+      <div class="muted small mb-16">Add your Claude API key in Settings to let AI read question papers and propose an answer key.</div>
+      <button class="btn btn-primary btn-block" data-action="goto" data-href="#/settings">Open Settings</button>
+    `);
     return;
   }
-  banner.className = 'banner banner-info mb-16';
-  banner.textContent = 'AI proposed answers below — review and correct anything before approving.';
+  if (!test.questionPaper) {
+    promptForQuestionPaperImage(testId);
+    return;
+  }
+  await runAiProposeKey(testId);
+}
+
+function promptForQuestionPaperImage(testId) {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*'; input.capture = 'environment';
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      TestManager.update(testId, { questionPaper: { type: 'image', dataUrl: reader.result } });
+      await runAiProposeKey(testId);
+    };
+    reader.readAsDataURL(file);
+  });
+  input.click();
+}
+
+async function runAiProposeKey(testId) {
+  const test = TestManager.getById(testId);
+  const banner = document.getElementById('ai-banner');
+  if (banner) { banner.style.display = 'flex'; banner.className = 'banner banner-ai mb-16'; banner.textContent = 'Reading the question paper…'; }
+
+  const res = await QuestionParser.proposeAnswerKey(test.questionPaper ? test.questionPaper.dataUrl : null, test.numQuestions);
+  const bannerEl = document.getElementById('ai-banner');
+  if (!res.ok) {
+    if (bannerEl) { bannerEl.className = 'banner banner-warn mb-16'; bannerEl.textContent = res.message; bannerEl.style.display = 'flex'; }
+    return;
+  }
+  if (bannerEl) {
+    bannerEl.className = 'banner banner-ai mb-16';
+    let msg = 'AI proposed answers below — review and correct anything before approving.';
+    if (res.detectedNumQuestions && res.detectedNumQuestions !== test.numQuestions) {
+      msg += ` (AI counted ${res.detectedNumQuestions} questions on the page; this test is set to ${test.numQuestions} — settings unchanged.)`;
+    }
+    if (res.notes) msg += ' ' + res.notes;
+    bannerEl.textContent = msg;
+  }
+
   const draft = Forms.answerKeyDraft;
-  res.proposedKey.forEach(a => { draft.key[a.index] = a.optionIndex; });
+  res.proposedKey.forEach(a => {
+    if (a.index < 0 || a.index >= draft.key.length) return;
+    if (a.optionIndex !== null && a.optionIndex !== undefined) draft.key[a.index] = a.optionIndex;
+    draft.meta[a.index] = { source: 'ai_inferred', confidence: a.confidence, reasoning: a.reasoning, questionText: a.questionText };
+  });
   renderAnswerKey(testId);
 }
 
@@ -537,6 +611,7 @@ function handleApproveKey(testId) {
   const draft = Forms.answerKeyDraft;
   if (!AnswerKeyService.canApprove(draft.key)) { toast('Finish setting every answer first'); return; }
   TestManager.setAnswerKey(testId, draft.key, true);
+  TestManager.update(testId, { answerKeyMeta: draft.meta });
   Forms.answerKeyDraft = null;
   toast('Answer key approved');
   navigate(`#/test/${testId}`);
@@ -700,35 +775,63 @@ function showCameraPhase() {
 
 function showProcessingPhase() {
   root().innerHTML = `
-    <div class="scanner-wrap" style="align-items:center; justify-content:center;">
-      <div class="flex" style="flex-direction:column; align-items:center; gap:16px;">
-        <div class="spinner" style="width:36px; height:36px; border-width:4px;"></div>
-        <div style="color:#fff; font-weight:700;">Reading OMR sheet…</div>
+    ${bgBubbles()}
+    <div class="screen" style="padding-top:40px; align-items:center;">
+      <div class="ai-pill" style="margin:0 auto;"><span class="dot"></span>Understanding sheet…</div>
+      <div class="ai-processing-list" id="ai-steps" style="width:100%; max-width:340px; margin-left:auto; margin-right:auto;">
+        <div class="ai-step active" id="step-layout"><div class="step-icon">1</div><div class="step-label">Detecting layout</div></div>
+        <div class="ai-step" id="step-map"><div class="step-icon">2</div><div class="step-label">Mapping answer bubbles</div></div>
+        <div class="ai-step" id="step-marks"><div class="step-icon">3</div><div class="step-label">Detecting student marks</div></div>
+        <div class="ai-step" id="step-check"><div class="step-icon">4</div><div class="step-label">Checking answers</div></div>
       </div>
     </div>
   `;
 }
 
+function advanceProcessingStep(stepId, state) {
+  const el = document.getElementById(stepId);
+  if (!el) return;
+  el.classList.remove('active', 'done');
+  if (state) el.classList.add(state);
+  if (state === 'done') el.querySelector('.step-icon').textContent = '✓';
+}
+
 function processCapturedCanvas(canvas) {
   showProcessingPhase();
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const { test } = scanCtx;
-    const res = OmrScanner.processCapturedImage(canvas, test.omrTemplate);
-    if (!res.success) { showScanError(res.message); return; }
-    scanCtx.rawResult = res;
-    scanCtx.graded = GradingEngine.grade(res.detectedAnswers, test.answerKey, test.marking);
-    scanCtx.identity = StudentManager.normalizeIdentity({
-      name: null,
-      rollNumber: res.rollNumberResult ? res.rollNumberResult.rollNumber : null,
-      rollConfidence: res.rollNumberResult ? res.rollNumberResult.confidence : null,
-    });
+  const { test } = scanCtx;
 
-    if (res.quality.score < 50 || res.quality.warnings.length >= 2) {
-      showQualityGate(res.quality);
-    } else {
-      afterQualityAccepted();
-    }
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const res = OmrScanner.processCapturedImage(canvas, test.omrTemplate);
+    const steps = ['step-layout', 'step-map', 'step-marks', 'step-check'];
+    const failedAt = res.success ? null
+      : (res.reason === 'sheet_not_detected' ? 0 : 1);
+
+    let i = 0;
+    (function tick() {
+      if (failedAt !== null && i === failedAt + 1) {
+        setTimeout(() => showScanError(res.message), 380);
+        return;
+      }
+      if (i > 0) advanceProcessingStep(steps[i - 1], 'done');
+      if (i >= steps.length) { setTimeout(() => finishProcessing(res), 260); return; }
+      advanceProcessingStep(steps[i], 'active');
+      i++;
+      setTimeout(tick, 210);
+    })();
   }));
+}
+
+function finishProcessing(res) {
+  const { test } = scanCtx;
+  scanCtx.rawResult = res;
+  scanCtx.graded = GradingEngine.grade(res.detectedAnswers, test.answerKey, test.marking);
+  scanCtx.identity = StudentManager.normalizeIdentity({
+    name: null,
+    rollNumber: res.rollNumberResult ? res.rollNumberResult.rollNumber : null,
+    rollConfidence: res.rollNumberResult ? res.rollNumberResult.confidence : null,
+  });
+  if (res.quality.score < 50 || res.quality.warnings.length >= 2) showQualityGate(res.quality);
+  else afterQualityAccepted();
 }
 
 function showScanError(message) {
@@ -837,7 +940,7 @@ function showReviewQueue(flagged) {
     ${bgBubbles()}
     ${topbar('Review needed', { noBack: true })}
     <div class="screen" style="padding-top:4px;">
-      <div class="banner banner-amber mb-16" style="background:var(--amber-soft); color:#8A5E17;">${flagged.length} question${flagged.length === 1 ? '' : 's'} need your attention</div>
+      <div class="banner banner-review mb-16">${flagged.length} question${flagged.length === 1 ? '' : 's'} need your attention</div>
       <div id="review-list">
         ${flagged.map(pq => reviewCardHtml(pq, test)).join('')}
       </div>
@@ -966,10 +1069,10 @@ function renderResult(resultId) {
       </div>
 
       <div class="stat-grid mb-16">
-        <div class="sg-item"><div class="sg-num" style="color:var(--success);">✓ ${g.correct}</div><div class="sg-label">CORRECT</div></div>
-        <div class="sg-item"><div class="sg-num" style="color:var(--danger);">✕ ${g.wrong}</div><div class="sg-label">WRONG</div></div>
+        <div class="sg-item"><div class="sg-num" style="color:#1E8F68;">✓ ${g.correct}</div><div class="sg-label">CORRECT</div></div>
+        <div class="sg-item"><div class="sg-num" style="color:#C15530;">✕ ${g.wrong}</div><div class="sg-label">WRONG</div></div>
         <div class="sg-item"><div class="sg-num">○ ${g.unanswered}</div><div class="sg-label">UNANSWERED</div></div>
-        <div class="sg-item"><div class="sg-num" style="color:var(--amber);">? ${g.unclear}</div><div class="sg-label">UNCLEAR</div></div>
+        <div class="sg-item"><div class="sg-num" style="color:#9A7A1A;">? ${g.unclear}</div><div class="sg-label">UNCLEAR</div></div>
       </div>
 
       ${result.scanQuality ? `<div class="muted small mb-16 text-center">Scan quality ${result.scanQuality.score}% · Average confidence ${Math.round(g.avgConfidence * 100)}%</div>` : ''}
@@ -989,20 +1092,52 @@ function renderResult(resultId) {
   document.querySelectorAll('.qreview-row').forEach(row => {
     row.addEventListener('click', () => openEditResultAnswer(result.id, parseInt(row.getAttribute('data-q'), 10)));
   });
+  document.querySelectorAll('[data-explain-q]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      runExplainAnswer(result.id, parseInt(btn.getAttribute('data-explain-q'), 10), btn);
+    });
+  });
+}
+
+async function runExplainAnswer(resultId, qIndex, btnEl) {
+  const result = ResultManager.getById(resultId);
+  const test = TestManager.getById(result.testId);
+  const container = document.getElementById(`explain-${qIndex}`);
+  if (!AIVision.isConfigured()) {
+    container.innerHTML = `<div class="explain-box">Add your Claude API key in Settings to enable explanations.</div>`;
+    return;
+  }
+  btnEl.textContent = '…';
+  const pq = result.graded.perQuestion[qIndex];
+  const meta = (test.answerKeyMeta && test.answerKeyMeta[qIndex]) || null;
+  const res = await AIVision.explainAnswer({
+    questionNumber: qIndex + 1,
+    questionText: meta ? meta.questionText : null,
+    options: null,
+    studentAnswerLabel: pq.detected !== null && pq.detected !== undefined ? OmrGenerator.optionLetter(pq.detected) : 'no answer',
+    correctAnswerLabel: pq.correctOption !== null && pq.correctOption !== undefined ? OmrGenerator.optionLetter(pq.correctOption) : 'unknown',
+  });
+  btnEl.textContent = 'Explain';
+  if (!res.ok) { container.innerHTML = `<div class="explain-box">${escapeHtml(res.message)}</div>`; return; }
+  container.innerHTML = `<div class="explain-box">${escapeHtml(res.explanation)}</div>`;
 }
 
 function questionReviewRow(pq) {
   const tag = pq.outcome === 'correct' ? '✓' : (pq.outcome === 'wrong' || pq.outcome === 'invalid') ? '✕' : pq.outcome === 'unclear' ? '?' : '○';
-  const color = pq.outcome === 'correct' ? 'var(--success)' : (pq.outcome === 'wrong' || pq.outcome === 'invalid') ? 'var(--danger)' : pq.outcome === 'unclear' ? 'var(--amber)' : 'var(--ink-faint)';
+  const color = pq.outcome === 'correct' ? 'var(--mint)' : (pq.outcome === 'wrong' || pq.outcome === 'invalid') ? 'var(--coral)' : pq.outcome === 'unclear' ? 'var(--banana)' : 'var(--ink-faint)';
   const ansLabel = (pq.detected !== null && pq.detected !== undefined) ? OmrGenerator.optionLetter(pq.detected) : '—';
   const correctLabel = (pq.correctOption !== null && pq.correctOption !== undefined) ? OmrGenerator.optionLetter(pq.correctOption) : '—';
+  const isWrong = pq.outcome === 'wrong' || pq.outcome === 'invalid';
   return `
     <div class="qreview-row ${pq.corrected ? 'edited' : ''}" data-q="${pq.index}">
       <div class="qr-num">Q${pq.index + 1}</div>
       <div class="qr-ans" style="color:${color};">${ansLabel}</div>
       <span class="qr-tag" style="color:${color};">${tag}</span>
-      ${(pq.outcome === 'wrong' || pq.outcome === 'invalid') ? `<div class="qr-correct">Correct: ${correctLabel}</div>` : ''}
-    </div>`;
+      ${isWrong ? `<div class="qr-correct">Correct: ${correctLabel}</div>` : ''}
+      ${isWrong ? `<button class="explain-btn" data-explain-q="${pq.index}">Explain</button>` : ''}
+    </div>
+    <div id="explain-${pq.index}"></div>`;
 }
 
 function openEditResultAnswer(resultId, qIndex) {
@@ -1061,11 +1196,37 @@ function openResultMenu(resultId) {
 function renderSettings() {
   const tests = TestManager.getAll();
   const usageKb = Math.round(Storage.estimateUsageBytes() / 1024);
+  const aiCfg = AIVision.getConfig();
   root().innerHTML = `
     ${bgBubbles()}
     ${topbar('Settings & privacy')}
     <div class="screen" style="padding-top:4px;">
-      <div class="banner banner-info mb-16">Everything is processed and stored on this device. Nothing is uploaded unless you connect an external AI service.</div>
+      <div class="banner banner-info mb-16">Everything is processed and stored on this device. Nothing is uploaded unless you connect an external AI service below.</div>
+
+      <div class="section-title">AI Vision</div>
+      <div class="glass glass-panel mb-16">
+        <div class="toggle-row">
+          <div><div class="tr-label">Enable AI Vision</div><div class="tr-sub">Reads question papers and proposes answer keys</div></div>
+          <div class="switch ${aiCfg.enabled ? 'on' : ''}" id="sw-ai-enabled"></div>
+        </div>
+        <div class="field mt-12">
+          <label>Claude API key</label>
+          <input type="password" id="ai-key-input" placeholder="sk-ant-..." value="${escapeHtml(aiCfg.apiKey || '')}" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Model</label>
+          <select id="ai-model-select">
+            <option value="claude-sonnet-5" ${aiCfg.model === 'claude-sonnet-5' ? 'selected' : ''}>Claude Sonnet 5 (recommended)</option>
+            <option value="claude-haiku-4-5-20251001" ${aiCfg.model === 'claude-haiku-4-5-20251001' ? 'selected' : ''}>Claude Haiku 4.5 (faster, cheaper)</option>
+          </select>
+        </div>
+        <div class="muted small mb-12">Your key is stored only in this browser\u2019s local storage and is sent directly to Anthropic\u2019s API \u2014 never bundled in the app, never sent anywhere else. Since this is a static site with no backend, anyone with access to this device/browser could read the key from local storage; use a key with a low spending limit.</div>
+        <div class="flex gap-12">
+          <button class="btn btn-glass flex-1" id="save-ai-config">Save</button>
+          <button class="btn btn-primary flex-1" id="test-ai-connection">Test connection</button>
+        </div>
+        <div id="ai-test-result" class="muted small mt-12"></div>
+      </div>
 
       <div class="section-title">Storage</div>
       <div class="glass glass-panel mb-16">
@@ -1080,10 +1241,34 @@ function renderSettings() {
 
       <div class="section-title">About</div>
       <div class="glass glass-panel">
-        <div class="muted small">OMR Magic runs entirely offline for scanning and grading. AI question-paper reading requires an internet connection and a configured AI provider — it will tell you honestly when it isn\u2019t available rather than guessing.</div>
+        <div class="muted small">OMR Magic grades scanned answer sheets entirely offline using its own computer-vision engine. AI Vision, above, is optional and only used to help set up an answer key from a question paper photo, and to explain wrong answers on request.</div>
       </div>
     </div>
   `;
+
+  let pendingEnabled = aiCfg.enabled;
+  document.getElementById('sw-ai-enabled').addEventListener('click', (e) => {
+    pendingEnabled = !pendingEnabled;
+    e.target.classList.toggle('on', pendingEnabled);
+  });
+  document.getElementById('save-ai-config').addEventListener('click', () => {
+    const apiKey = document.getElementById('ai-key-input').value.trim();
+    const model = document.getElementById('ai-model-select').value;
+    AIVision.setConfig({ apiKey, model, enabled: pendingEnabled });
+    toast('AI settings saved');
+  });
+  document.getElementById('test-ai-connection').addEventListener('click', async () => {
+    const apiKey = document.getElementById('ai-key-input').value.trim();
+    const model = document.getElementById('ai-model-select').value;
+    AIVision.setConfig({ apiKey, model, enabled: true });
+    document.getElementById('sw-ai-enabled').classList.add('on');
+    pendingEnabled = true;
+    const resultEl = document.getElementById('ai-test-result');
+    resultEl.textContent = 'Testing…';
+    const res = await AIVision.testConnection();
+    resultEl.textContent = res.message;
+    resultEl.style.color = res.ok ? 'var(--success)' : 'var(--danger)';
+  });
 }
 
 function handleClearAllData() {

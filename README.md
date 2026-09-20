@@ -60,6 +60,39 @@ with a camera.
   wipe all local data, from Settings. Nothing is ever uploaded anywhere;
   all image processing happens in the browser on-device.
 
+## AI Vision (v2) — real, optional, bring-your-own-key
+
+Settings → **AI Vision** lets you paste your own Claude API key. It's stored
+only in this browser's `localStorage` and calls `api.anthropic.com` directly
+from the browser using Anthropic's documented
+`anthropic-dangerous-direct-browser-access` header — this is Anthropic's
+supported "bring your own key" pattern for exactly this situation (a static
+site with no backend to proxy through). The key is never in source code,
+never sent anywhere but Anthropic. Because it's client-side, anyone with
+access to this browser/device could read the key from local storage —
+use a key with a low spending limit.
+
+With it configured:
+- **Answer Key screen** — "Let AI read the question paper" sends a photo of
+  the question paper to Claude's vision model and gets back a proposed
+  answer key with a per-question confidence score and short reasoning
+  (tap the "AI" badge on any row to see why). Every answer is still a
+  manual-grid entry underneath — tapping any option overrides the AI
+  proposal instantly and marks it "manual." The key still can't be approved
+  until every question has an answer, AI-proposed or not.
+- **Result screen** — an "Explain" button appears next to each wrong answer
+  and generates a short, on-demand explanation. Never automatic, never
+  blocks the fast-check workflow.
+- **Scanning itself is unchanged** — AI is never used to read bubble marks
+  off a scanned student sheet. That stays on the deterministic,
+  homography-based CV engine in `omrScanner.js`, which is what makes "never
+  invent a bubble location" an actual guarantee rather than a promise a
+  language model can't fully keep at pixel precision.
+
+With AI Vision off (the default) or offline, every AI-touched screen falls
+back to fully manual entry — the app never blocks or degrades because AI
+isn't available.
+
 ## What's intentionally left as a clean interface, not faked
 
 Building genuinely reliable versions of these requires either an external
@@ -91,7 +124,8 @@ js/testManager.js       Test template CRUD
 js/gradingEngine.js     Pure scoring logic
 js/studentManager.js    Identity normalization helpers
 js/resultManager.js     Result persistence + class insights
-js/answerKeyService.js  Manual key helpers + QuestionParser (AI interface)
+js/answerKeyService.js  Manual key helpers + QuestionParser (adapts aiVision output)
+js/aiVision.js          Real Claude API calls: question-paper reading, explanations
 js/omrGenerator.js      Builds + renders the exact OMR sheet template
 js/imageProcessor.js    Grayscale, homography math, warping, patch sampling
 js/omrScanner.js        Fiducial detection, rectification, bubble reading
